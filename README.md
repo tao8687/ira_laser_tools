@@ -28,3 +28,9 @@ furlan@disco.unimib.it or augusto.ballardini@unimib.it
 Paper link: https://arxiv.org/abs/1411.1086
 
 Both nodes compile under catkin in hydro/indigo and use PCL1.7
+
+## Fusion point cloud intensity information
+![rviz_screenshot_2024_06_13-09_09_47](https://github.com/tao8687/ira_laser_tools/assets/45028297/f94db4ff-6a96-44ad-992a-1063a84f24c6)
+
+## Fusion laser scan intensity information
+![rviz_screenshot_2024_06_13-09_09_27](https://github.com/tao8687/ira_laser_tools/assets/45028297/ec28ea11-39f5-4aa0-810b-ea31e1e56361)

@@ -1,6 +1,5 @@
 #include <ros/ros.h>
 #include <string.h>
-#include <tf/transform_listener.h>
 #include <pcl_ros/transforms.h>
 #include <laser_geometry/laser_geometry.h>
 #include <pcl/point_cloud.h>
@@ -15,6 +14,9 @@
 #include <dynamic_reconfigure/server.h>
 #include <ira_laser_tools/laserscan_multi_mergerConfig.h>
 
+#include <tf2/exceptions.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_sensor_msgs/tf2_sensor_msgs.h>
 using namespace std;
 using namespace pcl;
 using namespace laserscan_multi_merger;
@@ -22,6 +24,7 @@ using namespace laserscan_multi_merger;
 class LaserscanMerger
 {
 	public:
+
 		LaserscanMerger();
 		void scanCallback(const sensor_msgs::LaserScan::ConstPtr &scan, std::string topic);
 		void pointcloud_to_laserscan(Eigen::MatrixXf points, pcl::PCLPointCloud2 *merged_cloud);
@@ -30,7 +33,8 @@ class LaserscanMerger
 	private:
 		ros::NodeHandle node_;
 		laser_geometry::LaserProjection projector_;
-		tf::TransformListener tfListener_;
+		tf2_ros::Buffer tf_buffer_;
+    	tf2_ros::TransformListener tf_listener_; 
 
 		ros::Publisher point_cloud_publisher_;
 		ros::Publisher laser_scan_publisher_;
@@ -124,7 +128,7 @@ void LaserscanMerger::laserscan_topic_parser()
 	}
 }
 
-LaserscanMerger::LaserscanMerger()
+LaserscanMerger::LaserscanMerger():tf_listener_(tf_buffer_)
 {
 	ros::NodeHandle nh("~");
 
@@ -147,16 +151,13 @@ LaserscanMerger::LaserscanMerger()
 
 void LaserscanMerger::scanCallback(const sensor_msgs::LaserScan::ConstPtr &scan, std::string topic)
 {
-	sensor_msgs::PointCloud tmpCloud1, tmpCloud2;
-	sensor_msgs::PointCloud2 tmpCloud3;
+	sensor_msgs::PointCloud2 tmpCloud1, tmpCloud2;
 
-	// refer to http://wiki.ros.org/tf/Tutorials/tf%20and%20Time%20%28C%2B%2B%29
 	try
 	{
-		// Verify that TF knows how to transform from the received scan to the destination scan frame
-		tfListener_.waitForTransform(scan->header.frame_id.c_str(), destination_frame.c_str(), scan->header.stamp, ros::Duration(1));
-		projector_.transformLaserScanToPointCloud(scan->header.frame_id, *scan, tmpCloud1, tfListener_, laser_geometry::channel_option::Distance);
-		tfListener_.transformPointCloud(destination_frame.c_str(), tmpCloud1, tmpCloud2);
+		tf_buffer_.lookupTransform(scan->header.frame_id.c_str(), destination_frame.c_str(), scan->header.stamp, ros::Duration(1));
+		projector_.transformLaserScanToPointCloud(scan->header.frame_id, *scan, tmpCloud1, tf_buffer_, range_max);
+		pcl_ros::transformPointCloud(destination_frame.c_str(), tmpCloud1, tmpCloud2, tf_buffer_);
 	}
 	catch (tf::TransformException ex)
 	{
@@ -167,8 +168,7 @@ void LaserscanMerger::scanCallback(const sensor_msgs::LaserScan::ConstPtr &scan,
 	{
 		if (topic.compare(input_topics[i]) == 0)
 		{
-			sensor_msgs::convertPointCloudToPointCloud2(tmpCloud2, tmpCloud3);
-			pcl_conversions::toPCL(tmpCloud3, clouds[i]);
+			pcl_conversions::toPCL(tmpCloud2, clouds[i]);
 			clouds_modified[i] = true;
 		}
 	}
@@ -218,13 +218,16 @@ void LaserscanMerger::pointcloud_to_laserscan(Eigen::MatrixXf points, pcl::PCLPo
 
 	uint32_t ranges_size = std::ceil((output->angle_max - output->angle_min) / output->angle_increment);
 	output->ranges.assign(ranges_size, output->range_max + 1.0);
+    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_xyzI(new pcl::PointCloud<pcl::PointXYZI>());
+    pcl::fromPCLPointCloud2(*merged_cloud, *cloud_xyzI);
+    output->intensities.resize(ranges_size, 0.0);
 
 	for (int i = 0; i < points.cols(); i++)
 	{
 		const float &x = points(0, i);
 		const float &y = points(1, i);
 		const float &z = points(2, i);
-
+		float intensity = cloud_xyzI->points[i].intensity; 
 		if (std::isnan(x) || std::isnan(y) || std::isnan(z))
 		{
 			ROS_DEBUG("rejected for nan in point(%f, %f, %f)\n", x, y, z);
@@ -248,7 +251,10 @@ void LaserscanMerger::pointcloud_to_laserscan(Eigen::MatrixXf points, pcl::PCLPo
 		int index = (angle - output->angle_min) / output->angle_increment;
 
 		if (output->ranges[index] * output->ranges[index] > range_sq)
-			output->ranges[index] = sqrt(range_sq);
+        {
+            output->ranges[index] = sqrt(range_sq);
+            output->intensities[index] = intensity;
+        }
 	}
 
 	laser_scan_publisher_.publish(output);
